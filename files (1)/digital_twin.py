@@ -26,6 +26,7 @@ class WellState:
     rod_load: float
     failure_risk: float
     is_anomalous: int
+    anomaly_type: str = "Normal Operation"
 
 
 class ReservoirTwin:
@@ -54,12 +55,16 @@ class ReservoirTwin:
         Temperature_increase = (steam_volume - 60) * 0.15
         This is a simplified model based on heat transfer
         """
-        # Heat transferred proportional to steam volume
-        heat_factor = (steam_volume - 60) * 0.15
+        # Prototype heat balance: all CSS controls contribute to thermal response.
+        heat_factor = (
+            (steam_volume - 60) * 0.15
+            + (steam_pressure - 22) * 0.25
+            + (injection_duration - 18) * 0.05
+        )
         temp_increase = max(0, heat_factor)
         
         # Peak temperature reached
-        peak_temp = self.initial_temp + temp_increase
+        peak_temp = self.current_temp + temp_increase
         self.current_temp = peak_temp
         
         # Calculate viscosity at new temperature
@@ -78,8 +83,8 @@ class ReservoirTwin:
         Simulate temperature cooling after steam injection
         Exponential cooling model
         """
-        # Cooling rate: 0.8°C per cycle (exponential decay)
-        cooling_rate = 0.8 * (1 - np.exp(-days_elapsed / 10))
+        # Cooling rate: exponential return toward the initial reservoir state.
+        cooling_rate = (self.current_temp - self.initial_temp) * (1 - np.exp(-days_elapsed / 10))
         self.current_temp = max(self.initial_temp, self.current_temp - cooling_rate)
         
         # Update viscosity as temperature drops
@@ -145,8 +150,7 @@ class WellboreTwin:
         """
         # Flow rate proportional to mobility (inverse of viscosity)
         base_flow = oil_mobility * 150
-        flow_rate = base_flow + np.random.normal(0, 5)
-        flow_rate = max(0, flow_rate)
+        flow_rate = max(0, base_flow)
         
         # Calculate pressure drop
         pressure_drop = self.calculate_pressure_drop(oil_viscosity, flow_rate)
@@ -310,8 +314,7 @@ class SRPTwin:
         # Higher stroke, higher SPM, higher viscosity → higher rod load
         base_rod_load = (stroke_length / 100) * (spm / 5) * 50
         viscosity_load_factor = (oil_viscosity / 500)
-        rod_load = base_rod_load * viscosity_load_factor + np.random.normal(0, 5)
-        rod_load = max(0, rod_load)
+        rod_load = max(0, base_rod_load * viscosity_load_factor)
         
         # Calculate pump efficiency
         efficiency = self.calculate_pump_efficiency(oil_viscosity, rod_load, vfd_frequency)
@@ -323,8 +326,8 @@ class SRPTwin:
         # Energy consumption
         energy = self.calculate_energy_consumption(spm, stroke_length, rod_load, oil_viscosity)
         
-        # SOR (Steam-Oil Ratio)
-        sor = np.random.uniform(3.0, 5.0) if actual_production > 1 else 10.0
+        # IntegratedDigitalTwin computes SOR after CSS steam usage is known.
+        sor = 0.0
         
         # Failure risk
         failure_risk = self.calculate_failure_risk(rod_load, spm, oil_viscosity)
@@ -393,6 +396,15 @@ class IntegratedDigitalTwin:
         reservoir_response = self.reservoir_twin.simulate_steam_injection(
             steam_volume, steam_pressure, injection_duration
         )
+
+        # Soak time controls heat retention; production cutoff is represented as
+        # a conservative production operating factor for this prototype.
+        soak_retention = 1.0 - 0.08 * np.exp(-soak_time / 24.0)
+        self.reservoir_twin.current_temp = (
+            self.reservoir_twin.initial_temp
+            + (self.reservoir_twin.current_temp - self.reservoir_twin.initial_temp) * soak_retention
+        )
+        self.reservoir_twin.current_viscosity = 1100 * np.exp(-0.015 * self.reservoir_twin.current_temp)
         
         # Step 2: Get current reservoir state
         reservoir_state = self.reservoir_twin.get_state()
@@ -412,6 +424,8 @@ class IntegratedDigitalTwin:
             oil_viscosity=reservoir_state['viscosity'],
             pump_inlet_pressure=wellbore_response['pump_inlet_pressure']
         )
+        srp_response['actual_production'] *= np.clip(0.97 + 0.03 * production_cutoff, 0.95, 1.03)
+        srp_response['sor'] = steam_volume / max(srp_response['actual_production'] * 0.5, 1.0)
         
         # Create unified well state
         well_state = WellState(
@@ -428,8 +442,12 @@ class IntegratedDigitalTwin:
             current_sor=srp_response['sor'],
             rod_load=srp_response['rod_load'],
             failure_risk=srp_response['failure_risk'],
-            is_anomalous=srp_response['is_anomalous']
+            is_anomalous=srp_response['is_anomalous'],
+            anomaly_type=srp_response['anomaly_type']
         )
+
+        # Advance the reservoir to the next cycle after the current response.
+        self.reservoir_twin.simulate_cooling(max(1.0, soak_time / 24.0))
         
         # Store in history
         self.simulation_history.append(well_state)
@@ -452,7 +470,8 @@ class IntegratedDigitalTwin:
             'sor': round(latest.current_sor, 2),
             'rod_load': round(latest.rod_load, 2),
             'failure_risk': round(latest.failure_risk, 3),
-            'is_anomalous': latest.is_anomalous
+            'is_anomalous': latest.is_anomalous,
+            'anomaly_type': latest.anomaly_type
         }
 
 

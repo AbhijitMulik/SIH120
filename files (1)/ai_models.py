@@ -6,13 +6,22 @@ Train models for production, temperature, energy, and failure risk prediction
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
-from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestRegressor, RandomForestClassifier
-from sklearn.metrics import mean_squared_error, r2_score, accuracy_score, classification_report
+from sklearn.calibration import CalibratedClassifierCV
+from sklearn.metrics import (
+    mean_squared_error, mean_absolute_error, r2_score, accuracy_score,
+    precision_recall_fscore_support
+)
 import xgboost as xgb
 import joblib
 import os
 from typing import Dict, Tuple, List
+
+
+def temporal_split(X, y, test_fraction=0.2):
+    """Keep later observations for testing instead of shuffling time-series data."""
+    split_index = max(1, int(len(X) * (1 - test_fraction)))
+    return X[:split_index], X[split_index:], y[:split_index], y[split_index:]
 
 
 class ProductionPredictor:
@@ -38,9 +47,7 @@ class ProductionPredictor:
         X_scaled = self.scaler.fit_transform(X)
         
         # Split data
-        X_train, X_test, y_train, y_test = train_test_split(
-            X_scaled, y, test_size=0.2, random_state=42
-        )
+        X_train, X_test, y_train, y_test = temporal_split(X_scaled, y)
         
         # Train XGBoost model
         self.model = xgb.XGBRegressor(
@@ -58,6 +65,7 @@ class ProductionPredictor:
         
         return {
             'model_type': 'XGBoost',
+            'mae': round(mean_absolute_error(y_test, y_pred), 3),
             'rmse': round(rmse, 3),
             'r2_score': round(r2, 3),
             'samples_trained': len(X_train)
@@ -114,7 +122,7 @@ class TemperaturePredictor:
         
         # Create previous temperature feature
         df['previous_temperature'] = df.groupby('well_id')['reservoir_temperature'].shift(1)
-        df['previous_temperature'].fillna(46.0, inplace=True)
+        df['previous_temperature'] = df['previous_temperature'].fillna(46.0)
         
         X = df[self.feature_names].values
         y = df['reservoir_temperature'].values
@@ -123,9 +131,7 @@ class TemperaturePredictor:
         X_scaled = self.scaler.fit_transform(X)
         
         # Split data
-        X_train, X_test, y_train, y_test = train_test_split(
-            X_scaled, y, test_size=0.2, random_state=42
-        )
+        X_train, X_test, y_train, y_test = temporal_split(X_scaled, y)
         
         # Train model
         self.model = xgb.XGBRegressor(
@@ -143,6 +149,7 @@ class TemperaturePredictor:
         
         return {
             'model_type': 'XGBoost',
+            'mae': round(mean_absolute_error(y_test, y_pred), 3),
             'rmse': round(rmse, 3),
             'r2_score': round(r2, 3),
             'samples_trained': len(X_train)
@@ -194,9 +201,7 @@ class EnergyPredictor:
         
         X_scaled = self.scaler.fit_transform(X)
         
-        X_train, X_test, y_train, y_test = train_test_split(
-            X_scaled, y, test_size=0.2, random_state=42
-        )
+        X_train, X_test, y_train, y_test = temporal_split(X_scaled, y)
         
         self.model = RandomForestRegressor(
             n_estimators=100,
@@ -212,6 +217,7 @@ class EnergyPredictor:
         
         return {
             'model_type': 'RandomForest',
+            'mae': round(mean_absolute_error(y_test, y_pred), 3),
             'rmse': round(rmse, 3),
             'r2_score': round(r2, 3),
             'samples_trained': len(X_train)
@@ -250,6 +256,7 @@ class FailureRiskClassifier:
     def __init__(self):
         self.model = None
         self.scaler = StandardScaler()
+        self.class_prior = np.array([1.0, 0.0, 0.0])
         self.feature_names = [
             'rod_load', 'spm', 'oil_viscosity', 'motor_current',
             'stroke_length', 'vfd_frequency'
@@ -271,24 +278,36 @@ class FailureRiskClassifier:
         
         X_scaled = self.scaler.fit_transform(X)
         
-        X_train, X_test, y_train, y_test = train_test_split(
-            X_scaled, y, test_size=0.2, random_state=42
-        )
+        X_train, X_test, y_train, y_test = temporal_split(X_scaled, y)
+        self.class_prior = np.bincount(y_train, minlength=3).astype(float)
+        self.class_prior /= max(self.class_prior.sum(), 1.0)
         
-        self.model = RandomForestClassifier(
+        base_model = RandomForestClassifier(
             n_estimators=100,
             max_depth=10,
             random_state=42,
             n_jobs=-1
         )
+        class_counts = np.bincount(y_train)
+        calibration_folds = min(3, int(class_counts[class_counts > 0].min())) if np.any(class_counts > 0) else 0
+        self.model = (
+            CalibratedClassifierCV(base_model, method='sigmoid', cv=calibration_folds)
+            if calibration_folds >= 2 else base_model
+        )
         self.model.fit(X_train, y_train)
         
         y_pred = self.model.predict(X_test)
         accuracy = accuracy_score(y_test, y_pred)
+        precision, recall, f1, _ = precision_recall_fscore_support(
+            y_test, y_pred, average='weighted', zero_division=0
+        )
         
         return {
             'model_type': 'RandomForestClassifier',
             'accuracy': round(accuracy, 3),
+            'precision': round(precision, 3),
+            'recall': round(recall, 3),
+            'f1_score': round(f1, 3),
             'samples_trained': len(X_train)
         }
     
@@ -311,17 +330,26 @@ class FailureRiskClassifier:
         probabilities = self.model.predict_proba(features_scaled)[0]
         
         risk_label = self.risk_labels[risk_class]
-        probability = float(probabilities[risk_class])
+        # Synthetic labels are highly separable; shrink confidence toward the
+        # training prior until field outcomes provide calibration evidence.
+        probability = min(
+            0.95,
+            float(0.85 * probabilities[risk_class] + 0.15 * self.class_prior[risk_class])
+        )
         
         return risk_label, probability
     
     def save(self, filename='failure_risk_model.pkl'):
         joblib.dump(self.model, filename)
         joblib.dump(self.scaler, filename.replace('.pkl', '_scaler.pkl'))
+        joblib.dump(self.class_prior, filename.replace('.pkl', '_prior.pkl'))
     
     def load(self, filename='failure_risk_model.pkl'):
         self.model = joblib.load(filename)
         self.scaler = joblib.load(filename.replace('.pkl', '_scaler.pkl'))
+        prior_file = filename.replace('.pkl', '_prior.pkl')
+        if os.path.exists(prior_file):
+            self.class_prior = joblib.load(prior_file)
 
 
 class ModelManager:

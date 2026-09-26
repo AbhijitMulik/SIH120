@@ -3,11 +3,11 @@ FastAPI Backend for SIH26120 Digital Twin
 Provides REST API for well simulation, optimization, and dashboarding
 """
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
-from typing import Dict, List, Optional
+from pydantic import BaseModel, Field
+from typing import Dict, List, Literal, Optional
 import pandas as pd
 import os
 
@@ -41,19 +41,26 @@ wells_data = {}
 
 # Pydantic models for request/response
 class SimulationRequest(BaseModel):
-    steam_volume: float
-    steam_pressure: float
-    injection_duration: float
-    soak_time: float
-    spm: float
-    stroke_length: float
-    vfd_frequency: float
-    production_cutoff: float = 1.0
+    steam_volume: float = Field(ge=60, le=100)
+    steam_pressure: float = Field(ge=22, le=28)
+    injection_duration: float = Field(ge=18, le=30)
+    soak_time: float = Field(ge=24, le=48)
+    spm: float = Field(ge=3, le=6.5)
+    stroke_length: float = Field(ge=70, le=105)
+    vfd_frequency: float = Field(ge=35, le=55)
+    production_cutoff: float = Field(default=1.0, ge=0.5, le=2.0)
 
 
 class OptimizationRequest(BaseModel):
-    n_iterations: int = 50
-    priority: str = "balanced"  # balanced, production, efficiency, cost
+    n_iterations: int = Field(default=50, ge=10, le=768)
+    priority: Literal["balanced", "production", "efficiency", "cost"] = "balanced"
+
+
+class FeedbackRequest(SimulationRequest):
+    observed_production: float = Field(ge=0)
+    observed_energy: float = Field(ge=0)
+    observed_failure_risk: float = Field(ge=0, le=1)
+    observed_temperature: Optional[float] = Field(default=None, ge=-20, le=200)
 
 
 class WellStateResponse(BaseModel):
@@ -85,6 +92,25 @@ class RecommendationResponse(BaseModel):
     priority: str
 
 
+def simulate_snapshot(parameters: Dict) -> object:
+    """Evaluate one independent cycle from the configured initial well state."""
+    scenario = IntegratedDigitalTwin(digital_twin.well_id)
+    return scenario.simulate_css_cycle(**parameters)
+
+
+def ensure_models_loaded() -> None:
+    """Load persisted models on demand after a reload or direct API import."""
+    if model_manager.production_predictor.model is not None:
+        return
+    model_dir = os.path.join(os.path.dirname(__file__), 'models')
+    if not os.path.exists(os.path.join(model_dir, 'production_model.pkl')):
+        raise HTTPException(status_code=503, detail="Models are not trained yet")
+    try:
+        model_manager.load_all(model_dir)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Models could not be loaded: {exc}")
+
+
 # ============================================================================
 # API ENDPOINTS
 # ============================================================================
@@ -112,16 +138,9 @@ async def simulate_well(request: SimulationRequest):
     Returns predicted well state
     """
     try:
-        well_state = digital_twin.simulate_css_cycle(
-            steam_volume=request.steam_volume,
-            steam_pressure=request.steam_pressure,
-            injection_duration=request.injection_duration,
-            soak_time=request.soak_time,
-            spm=request.spm,
-            stroke_length=request.stroke_length,
-            vfd_frequency=request.vfd_frequency,
-            production_cutoff=request.production_cutoff
-        )
+        parameters = request.model_dump()
+        well_state = simulate_snapshot(parameters)
+        digital_twin.simulation_history.append(well_state)
         
         return {
             "success": True,
@@ -134,7 +153,8 @@ async def simulate_well(request: SimulationRequest):
                 "sor": round(well_state.current_sor, 2),
                 "rod_load": round(well_state.rod_load, 2),
                 "failure_risk": round(well_state.failure_risk, 3),
-                "is_anomalous": well_state.is_anomalous
+                "is_anomalous": well_state.is_anomalous,
+                "anomaly_type": well_state.anomaly_type
             }
         }
     except Exception as e:
@@ -143,13 +163,14 @@ async def simulate_well(request: SimulationRequest):
 
 @app.get("/api/simulate/what-if")
 async def what_if_simulator(
-    steam_volume: float = 80,
-    steam_pressure: float = 25,
-    injection_duration: float = 24,
-    soak_time: float = 36,
-    spm: float = 4.0,
-    stroke_length: float = 86,
-    vfd_frequency: float = 45
+    steam_volume: float = Query(default=80, ge=60, le=100),
+    steam_pressure: float = Query(default=25, ge=22, le=28),
+    injection_duration: float = Query(default=24, ge=18, le=30),
+    soak_time: float = Query(default=36, ge=24, le=48),
+    spm: float = Query(default=4.0, ge=3, le=6.5),
+    stroke_length: float = Query(default=86, ge=70, le=105),
+    vfd_frequency: float = Query(default=45, ge=35, le=55),
+    production_cutoff: float = Query(default=1.0, ge=0.5, le=2.0)
 ):
     """
     What-If Simulator: Evaluate multiple scenarios
@@ -157,13 +178,24 @@ async def what_if_simulator(
     """
     try:
         # Current scenario (baseline)
-        current = digital_twin.simulate_css_cycle(80, 25, 24, 36, 4.0, 86, 45, 1.0)
+        current = simulate_snapshot({
+            'steam_volume': 80, 'steam_pressure': 25,
+            'injection_duration': 24, 'soak_time': 36,
+            'spm': 4.0, 'stroke_length': 86, 'vfd_frequency': 45,
+            'production_cutoff': 1.0
+        })
         
         # Proposed scenario
-        proposed = digital_twin.simulate_css_cycle(
-            steam_volume, steam_pressure, injection_duration, soak_time,
-            spm, stroke_length, vfd_frequency, 1.0
-        )
+        proposed = simulate_snapshot({
+            'steam_volume': steam_volume,
+            'steam_pressure': steam_pressure,
+            'injection_duration': injection_duration,
+            'soak_time': soak_time,
+            'spm': spm,
+            'stroke_length': stroke_length,
+            'vfd_frequency': vfd_frequency,
+            'production_cutoff': production_cutoff
+        })
         
         return {
             "success": True,
@@ -203,6 +235,8 @@ async def predict(request: SimulationRequest):
     Generate AI predictions for given parameters
     """
     try:
+        ensure_models_loaded()
+        twin_state = simulate_snapshot(request.model_dump())
         input_dict = {
             'steam_volume': request.steam_volume,
             'steam_pressure': request.steam_pressure,
@@ -211,10 +245,10 @@ async def predict(request: SimulationRequest):
             'spm': request.spm,
             'stroke_length': request.stroke_length,
             'vfd_frequency': request.vfd_frequency,
-            'rod_load': 75.0,
-            'oil_viscosity': 500.0,
-            'reservoir_temperature': 50.0,
-            'motor_current': 1000.0,
+            'rod_load': twin_state.rod_load,
+            'oil_viscosity': twin_state.oil_viscosity,
+            'reservoir_temperature': twin_state.reservoir_temperature,
+            'motor_current': (twin_state.current_energy / 11) * 150,
             'previous_temperature': 46.0
         }
         
@@ -227,9 +261,132 @@ async def predict(request: SimulationRequest):
                 "temperature_celsius": round(predictions['temperature'], 2),
                 "energy_consumption_kw": round(predictions['energy'], 2),
                 "failure_risk_level": predictions['failure_risk'][0],
-                "failure_risk_probability": round(predictions['failure_risk'][1], 3)
+                "failure_risk_probability": round(predictions['failure_risk'][1], 3),
+                "twin_reference": {
+                    "production_bopd": round(twin_state.current_production, 2),
+                    "temperature_celsius": round(twin_state.reservoir_temperature, 2),
+                    "energy_consumption_kw": round(twin_state.current_energy, 2),
+                    "failure_risk": round(twin_state.failure_risk, 3)
+                },
+                "agreement": {
+                    "production_error_percent": round((predictions['production'] - twin_state.current_production) / max(twin_state.current_production, 1) * 100, 2),
+                    "energy_error_percent": round((predictions['energy'] - twin_state.current_energy) / max(twin_state.current_energy, 1) * 100, 2),
+                    "warning": bool(abs(predictions['production'] - twin_state.current_production) / max(twin_state.current_production, 1) > 0.2)
+                }
             }
         }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/feedback")
+async def record_feedback(request: FeedbackRequest):
+    """Record an observed cycle outcome for audit and future recalibration."""
+    try:
+        ensure_models_loaded()
+        parameters = request.model_dump(exclude={
+            'observed_production', 'observed_energy',
+            'observed_failure_risk', 'observed_temperature'
+        })
+        twin_state = simulate_snapshot(parameters)
+        input_dict = {
+            **parameters,
+            'rod_load': twin_state.rod_load,
+            'oil_viscosity': twin_state.oil_viscosity,
+            'reservoir_temperature': twin_state.reservoir_temperature,
+            'motor_current': (twin_state.current_energy / 11) * 150,
+            'previous_temperature': 46.0
+        }
+        prediction = model_manager.predict_all(input_dict)
+        observed_temperature = request.observed_temperature
+        feedback_row = {
+            **parameters,
+            'predicted_production': prediction['production'],
+            'observed_production': request.observed_production,
+            'predicted_energy': prediction['energy'],
+            'observed_energy': request.observed_energy,
+            'predicted_failure_risk': prediction['failure_risk'][1],
+            'observed_failure_risk': request.observed_failure_risk,
+            'predicted_temperature': prediction['temperature'],
+            'observed_temperature': observed_temperature,
+            'production_error': request.observed_production - prediction['production'],
+            'energy_error': request.observed_energy - prediction['energy'],
+            'risk_error': request.observed_failure_risk - prediction['failure_risk'][1]
+        }
+        feedback_path = os.path.join(os.path.dirname(__file__), 'data', 'feedback_log.csv')
+        feedback_df = pd.DataFrame([feedback_row])
+        if os.path.exists(feedback_path):
+            feedback_df.to_csv(feedback_path, mode='a', header=False, index=False)
+        else:
+            feedback_df.to_csv(feedback_path, index=False)
+        return {
+            'success': True,
+            'feedback_file': feedback_path,
+            'records_added': 1,
+            'errors': {
+                'production': round(feedback_row['production_error'], 3),
+                'energy': round(feedback_row['energy_error'], 3),
+                'failure_risk': round(feedback_row['risk_error'], 3)
+            },
+            'next_step': 'Review feedback_log.csv before merging validated field observations into training data.'
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/models/retrain-with-feedback")
+async def retrain_with_feedback():
+    """Retrain using reviewed feedback rows plus the synthetic baseline dataset."""
+    try:
+        ensure_models_loaded()
+        base_path = os.path.join(os.path.dirname(__file__), 'data', 'synthetic_data.csv')
+        feedback_path = os.path.join(os.path.dirname(__file__), 'data', 'feedback_log.csv')
+        if not os.path.exists(feedback_path):
+            raise HTTPException(status_code=404, detail="No feedback records available")
+
+        training_df = pd.read_csv(base_path)
+        feedback_df = pd.read_csv(feedback_path)
+        template = training_df.iloc[0].copy()
+        reviewed_rows = []
+        for _, feedback in feedback_df.iterrows():
+            parameters = {field: float(feedback[field]) for field in SimulationRequest.model_fields if field in feedback}
+            state = simulate_snapshot(parameters)
+            row = template.copy()
+            row.update(parameters)
+            row.update({
+                'reservoir_temperature': feedback.get('observed_temperature', state.reservoir_temperature),
+                'reservoir_pressure': state.reservoir_pressure,
+                'oil_viscosity': state.oil_viscosity,
+                'oil_mobility': state.oil_mobility,
+                'wellbore_temperature': state.wellbore_temp,
+                'wellbore_pressure_drop': state.wellbore_pressure_drop,
+                'pump_inlet_pressure': state.pump_inlet_pressure,
+                'actual_production': feedback.observed_production,
+                'pump_efficiency': state.current_efficiency,
+                'energy_consumption': feedback.observed_energy,
+                'sor': parameters['steam_volume'] / max(feedback.observed_production * 0.5, 1.0),
+                'rod_load_actual': state.rod_load,
+                'rod_load': state.rod_load,
+                'failure_risk': feedback.observed_failure_risk,
+                'motor_current': (feedback.observed_energy / 11) * 150,
+                'well_id': 'FEEDBACK',
+                'cycle_id': int(len(training_df) + len(reviewed_rows) + 1)
+            })
+            reviewed_rows.append(row)
+        combined = pd.concat([training_df, pd.DataFrame(reviewed_rows)], ignore_index=True)
+        results = model_manager.train_all(combined)
+        model_manager.save_all()
+        return {
+            'success': True,
+            'training_rows': len(combined),
+            'feedback_rows_used': len(reviewed_rows),
+            'results': results,
+            'warning': 'Only reviewed observations should be retained in feedback_log.csv.'
+        }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -310,7 +467,7 @@ async def generate_synthetic_data(n_cycles: int = 100, n_wells: int = 5):
     try:
         generator = BaghewalaWellDataGenerator()
         df = generator.generate_complete_dataset(n_cycles=n_cycles, n_wells=n_wells)
-        filepath = generator.save_dataset(df, f'data/synthetic_{n_wells}wells_{n_cycles}cycles.csv')
+        filepath = generator.save_dataset(df, f'synthetic_{n_wells}wells_{n_cycles}cycles.csv')
         
         return {
             "success": True,
@@ -322,6 +479,8 @@ async def generate_synthetic_data(n_cycles: int = 100, n_wells: int = 5):
                 "features": list(df.columns)
             }
         }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -426,7 +585,7 @@ async def dashboard_metrics():
                 },
                 "efficiency": {
                     "value": summary.get('pump_efficiency', 0),
-                    "unit": "%",
+                    "unit": "fraction",
                     "status": "normal"
                 },
                 "energy": {

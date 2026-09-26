@@ -101,7 +101,8 @@ class SimplifiedOptimizer:
             return {'valid': False, 'violations': violations, 'objectives': None}
         
         # Simulate with digital twin
-        well_state = self.digital_twin.simulate_css_cycle(
+        scenario_twin = IntegratedDigitalTwin(self.digital_twin.well_id)
+        well_state = scenario_twin.simulate_css_cycle(
             steam_volume=parameters['steam_volume'],
             steam_pressure=parameters['steam_pressure'],
             injection_duration=parameters['injection_duration'],
@@ -111,6 +112,17 @@ class SimplifiedOptimizer:
             vfd_frequency=parameters['vfd_frequency'],
             production_cutoff=parameters.get('production_cutoff', 1.0)
         )
+
+        # Safety must be checked against the simulated state, not only an input estimate.
+        actual_solution = {
+            **parameters,
+            'rod_load': well_state.rod_load,
+            'energy_consumption': well_state.current_energy,
+            'failure_risk': well_state.failure_risk,
+        }
+        is_valid, violations = self.constraints.check_constraints(actual_solution)
+        if not is_valid:
+            return {'valid': False, 'violations': violations, 'objectives': None}
         
         # Compile objectives
         objectives = {
@@ -237,13 +249,35 @@ class SimplifiedOptimizer:
             if iteration >= n_iterations:
                 break
         
-        # Rank solutions by fitness score
+        # Rank nondominated solutions so the displayed set is a real Pareto subset.
         valid_solutions = [s for s in solutions if s['valid']]
         valid_solutions.sort(key=lambda x: x['fitness_score'], reverse=True)
-        
-        print(f"Optimization complete: {len(valid_solutions)} valid solutions found")
-        
-        self.pareto_front = valid_solutions[:10]  # Keep top 10
+
+        def dominates(left, right):
+            left_obj, right_obj = left['objectives'], right['objectives']
+            no_worse = (
+                left_obj['production'] >= right_obj['production']
+                and left_obj['efficiency'] >= right_obj['efficiency']
+                and left_obj['sor'] <= right_obj['sor']
+                and left_obj['energy'] <= right_obj['energy']
+                and left_obj['failure_risk'] <= right_obj['failure_risk']
+            )
+            strictly_better = (
+                left_obj['production'] > right_obj['production']
+                or left_obj['efficiency'] > right_obj['efficiency']
+                or left_obj['sor'] < right_obj['sor']
+                or left_obj['energy'] < right_obj['energy']
+                or left_obj['failure_risk'] < right_obj['failure_risk']
+            )
+            return no_worse and strictly_better
+
+        pareto_solutions = [
+            solution for solution in valid_solutions
+            if not any(dominates(other, solution) for other in valid_solutions)
+        ]
+        print(f"Optimization complete: {len(valid_solutions)} valid, {len(pareto_solutions)} Pareto solutions found")
+
+        self.pareto_front = pareto_solutions[:10]
         
         return valid_solutions
     

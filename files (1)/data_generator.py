@@ -6,7 +6,6 @@ Generates data with realistic engineering relationships between CSS, wellbore, a
 import numpy as np
 import pandas as pd
 from datetime import datetime, timedelta
-import json
 import os
 
 class BaghewalaWellDataGenerator:
@@ -54,8 +53,8 @@ class BaghewalaWellDataGenerator:
             vfd_frequency = np.random.uniform(35, 55)  # Hz
             
             # Rod load is dependent on stroke and SPM
-            base_rod_load = (stroke_length / 100) * (spm / 5) * 100  # tons
-            rod_load = base_rod_load + np.random.normal(0, 5)
+            base_rod_load = (stroke_length / 100) * (spm / 5) * 50  # tons
+            rod_load = base_rod_load
             
             motor_power = (spm * stroke_length / 1000) * 25  # kW (simplified)
             
@@ -78,24 +77,31 @@ class BaghewalaWellDataGenerator:
         reservoir_data = []
         
         current_temp = self.initial_reservoir_temp
-        current_viscosity = self.initial_viscosity
-        cooling_rate = 0.8  # Temperature drops by 0.8°C per cycle
         
         for idx, row in css_df.iterrows():
             cycle = row['cycle_id']
             steam_vol = row['steam_volume']
+            steam_pressure = row['steam_pressure']
+            injection_duration = row['injection_duration']
+            soak_time = row['soak_time']
             
             # Temperature increase from steam injection (simplified thermodynamic model)
             # More steam volume → more heating
-            temp_increase = (steam_vol - 60) * 0.15 + np.random.normal(0, 1)
+            temp_increase = (
+                (steam_vol - 60) * 0.15
+                + (steam_pressure - 22) * 0.25
+                + (injection_duration - 18) * 0.05
+            )
             
             # Peak temperature during cycle
-            peak_temp = self.initial_reservoir_temp + temp_increase
+            peak_temp = current_temp + temp_increase
+            soak_retention = 1.0 - 0.08 * np.exp(-soak_time / 24.0)
+            peak_temp = self.initial_reservoir_temp + (peak_temp - self.initial_reservoir_temp) * soak_retention
             current_temp = peak_temp
             
             # Viscosity inversely related to temperature (empirical correlation)
             # For heavy oil: higher T → lower viscosity
-            viscosity = 1100 * np.exp(-0.015 * current_temp) + np.random.normal(0, 10)
+            viscosity = 1100 * np.exp(-0.015 * current_temp)
             viscosity = max(100, viscosity)  # Minimum 100 cP
             
             # Production decreases due to cooling over cycles
@@ -105,14 +111,15 @@ class BaghewalaWellDataGenerator:
             reservoir_data.append({
                 'cycle_id': cycle,
                 'reservoir_temperature': current_temp,
-                'reservoir_pressure': 15.0 + np.random.normal(0, 0.5),
+                'reservoir_pressure': 20.0,
                 'oil_viscosity': viscosity,
                 'oil_mobility': 1.0 / viscosity,  # Inverse of viscosity
                 'production_potential': production_factor
             })
             
-            # Apply cooling for next cycle
-            current_temp -= cooling_rate
+            current_temp = self.initial_reservoir_temp + (
+                current_temp - self.initial_reservoir_temp
+            ) * np.exp(-(soak_time / 24.0) / 10.0)
         
         return pd.DataFrame(reservoir_data)
     
@@ -128,17 +135,17 @@ class BaghewalaWellDataGenerator:
             temp = row['reservoir_temperature']
             viscosity = row['oil_viscosity']
             
-            # Wellbore pressure drop increases with viscosity
-            base_pressure_drop = 8.0  # bar
-            pressure_drop = base_pressure_drop + (viscosity / 200) + np.random.normal(0, 0.5)
-            
-            # Wellbore temperature (slightly lower than reservoir)
-            wellbore_temp = temp - np.random.uniform(2, 5)
-            
             # Flow rate (related to oil mobility and pressure gradient)
             mobility = row['oil_mobility']
-            flow_rate = mobility * 150 + np.random.normal(0, 5)  # bbl/day equivalent
+            flow_rate = mobility * 150  # bbl/day equivalent
             flow_rate = max(0, flow_rate)
+
+            # Wellbore pressure drop increases with viscosity and flow.
+            base_pressure_drop = 8.0  # bar
+            pressure_drop = base_pressure_drop + (viscosity / 500) * 2 + (flow_rate / 200) * 1.5
+
+            # Wellbore temperature (slightly lower than reservoir)
+            wellbore_temp = temp - 3.0
             
             wellbore_data.append({
                 'cycle_id': cycle,
@@ -146,12 +153,12 @@ class BaghewalaWellDataGenerator:
                 'wellbore_pressure_drop': pressure_drop,
                 'fluid_mobility': mobility,
                 'estimated_flow_rate': flow_rate,
-                'pump_inlet_pressure': 15.0 - pressure_drop + np.random.normal(0, 0.3)
+                'pump_inlet_pressure': max(0, 20.0 - pressure_drop)
             })
         
         return pd.DataFrame(wellbore_data)
     
-    def calculate_srp_performance(self, srp_df, wellbore_df, reservoir_df):
+    def calculate_srp_performance(self, srp_df, wellbore_df, reservoir_df, css_df):
         """
         Calculate SRP performance metrics
         Physics: Higher viscosity & load → Lower efficiency, higher energy
@@ -166,13 +173,14 @@ class BaghewalaWellDataGenerator:
             rod_load = row['rod_load']
             
             # Get corresponding wellbore/reservoir conditions
-            well_row = wellbore_df[wellbore_df['cycle_id'] == cycle].iloc[0]
             res_row = reservoir_df[reservoir_df['cycle_id'] == cycle].iloc[0]
             
             viscosity = res_row['oil_viscosity']
+            cutoff = css_df.loc[css_df['cycle_id'] == cycle, 'production_cutoff'].iloc[0]
+            steam_volume = css_df.loc[css_df['cycle_id'] == cycle, 'steam_volume'].iloc[0]
             
             # Pump displacement = SPM * Stroke * Area (simplified)
-            pump_disp = (spm / 5) * (stroke / 100) * 100
+            pump_disp = (spm / 5) * (stroke / 100) * 100 * 0.4
             
             # Theoretical production without losses
             theoretical_production = pump_disp * spm  # bbl/day
@@ -186,7 +194,8 @@ class BaghewalaWellDataGenerator:
             load_factor = 1.0 - (rod_load / 200)  # Load reduces efficiency
             load_factor = max(0.4, load_factor)
             
-            pump_efficiency = 0.75 * viscosity_factor * load_factor + np.random.normal(0, 0.05)
+            vfd_factor = max(0.9, 1.0 - abs(vfd - 45) / 50 * 0.1)
+            pump_efficiency = 0.75 * viscosity_factor * load_factor * vfd_factor
             pump_efficiency = np.clip(pump_efficiency, 0.2, 0.9)
             
             # Actual production = theoretical * efficiency
@@ -197,10 +206,13 @@ class BaghewalaWellDataGenerator:
             base_energy = 8.0  # kW baseline
             load_energy = (rod_load / 100) * 3
             viscosity_energy = (viscosity / 500) * 2
-            total_energy = base_energy + load_energy + viscosity_energy + np.random.normal(0, 0.5)
+            spm_energy = (spm / 5) * 1
+            total_energy = base_energy + load_energy + viscosity_energy + spm_energy
             
             # SOR (Steam-Oil Ratio)
-            sor = np.random.uniform(3.0, 5.0) if actual_production > 1 else 10.0
+            cutoff_factor = np.clip(0.97 + 0.03 * cutoff, 0.95, 1.03)
+            actual_production *= cutoff_factor
+            sor = steam_volume / max(actual_production * 0.5, 1.0)
             
             # Failure risk based on rod load and viscosity
             failure_risk = (rod_load / 150) * 0.5 + (viscosity / 1000) * 0.3
@@ -239,7 +251,7 @@ class BaghewalaWellDataGenerator:
             # Calculate responses
             reservoir_df = self.calculate_reservoir_response(css_df)
             wellbore_df = self.calculate_wellbore_conditions(reservoir_df, css_df)
-            srp_perf_df = self.calculate_srp_performance(srp_df, wellbore_df, reservoir_df)
+            srp_perf_df = self.calculate_srp_performance(srp_df, wellbore_df, reservoir_df, css_df)
             
             # Combine all data
             combined = pd.concat([

@@ -417,6 +417,116 @@
         .chart-container { min-height: 450px; }
         #chart, #whatIfChart, #optimizationChart { min-height: 360px; }
         footer { color: var(--muted); }
+
+        /* Dark operator-console motion layer */
+        :root {
+            --bg: #070b10;
+            --surface: #0e151d;
+            --surface-2: #141e28;
+            --surface-3: #1a2933;
+            --line: #263946;
+            --text: #e8f1f5;
+            --muted: #8fa4ae;
+            --accent: #3ee0a0;
+            --accent-2: #61baff;
+            --warning: #f4c95d;
+            --danger: #ff707d;
+        }
+
+        body {
+            background:
+                linear-gradient(rgba(62, 224, 160, .035) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(97, 186, 255, .035) 1px, transparent 1px),
+                radial-gradient(circle at 12% 0%, #17303a 0, var(--bg) 38%, #040609 100%);
+            background-size: 44px 44px, 44px 44px, auto;
+            color: var(--text);
+        }
+
+        header, .card, .chart-container,
+        body > .container > div[style*="background: white"] {
+            background: linear-gradient(145deg, rgba(20, 30, 40, .98), rgba(10, 16, 22, .98)) !important;
+            border: 1px solid var(--line);
+            box-shadow: 0 20px 55px rgba(0, 0, 0, .32);
+        }
+
+        header {
+            position: relative;
+            overflow: hidden;
+            animation: consoleEnter .7s ease both;
+        }
+
+        header::after {
+            content: "";
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+            background: linear-gradient(110deg, transparent 20%, rgba(97, 186, 255, .08) 48%, transparent 72%);
+            transform: translateX(-100%);
+            animation: scanline 6s ease-in-out infinite;
+        }
+
+        header h1, .card h3, .chart-container h3 { color: var(--accent-2); }
+        header h1 { letter-spacing: .02em; text-shadow: 0 0 24px rgba(97, 186, 255, .25); }
+        .card, .chart-container { animation: consoleEnter .6s ease both; }
+        .grid > .card:nth-child(2) { animation-delay: .08s; }
+        .grid > .card:nth-child(3) { animation-delay: .16s; }
+        .grid > .card:nth-child(4) { animation-delay: .24s; }
+
+        .status-item.online { box-shadow: 0 0 18px rgba(62, 224, 160, .12); }
+        #statusAPI, #statusModels, #statusWell { transition: transform .25s ease, box-shadow .25s ease; }
+        #statusAPI:hover, #statusModels:hover, #statusWell:hover { transform: translateY(-2px); box-shadow: 0 0 20px rgba(97, 186, 255, .2); }
+
+        button {
+            position: relative;
+            overflow: hidden;
+            transition: transform .2s ease, box-shadow .2s ease, background .2s ease;
+        }
+        button::after {
+            content: "";
+            position: absolute;
+            top: 0;
+            left: -120%;
+            width: 80%;
+            height: 100%;
+            background: linear-gradient(100deg, transparent, rgba(255, 255, 255, .22), transparent);
+            transform: skewX(-18deg);
+            transition: left .55s ease;
+        }
+        button:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(62, 224, 160, .16); }
+        button:hover::after { left: 130%; }
+        button:active { transform: translateY(0); }
+
+        input[type="number"], input[type="text"], select {
+            transition: border-color .2s ease, box-shadow .2s ease, background .2s ease;
+        }
+        input[type="number"]:focus, input[type="text"]:focus, select:focus {
+            background: #0c1720;
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px rgba(62, 224, 160, .12), 0 0 22px rgba(62, 224, 160, .08);
+        }
+
+        .metric-value { transition: color .25s ease, transform .25s ease; }
+        .metric:hover .metric-value { color: var(--accent); transform: translateX(4px); }
+        .alert-box { animation: statusReveal .35s ease both; }
+        #aiValidationCard { border-color: rgba(97, 186, 255, .35); }
+        #aiAgreementStatus { transition: background .3s ease, border-color .3s ease; }
+
+        @keyframes consoleEnter {
+            from { opacity: 0; transform: translateY(14px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes statusReveal {
+            from { opacity: 0; transform: scale(.98); }
+            to { opacity: 1; transform: scale(1); }
+        }
+        @keyframes scanline {
+            0%, 35% { transform: translateX(-100%); }
+            60%, 100% { transform: translateX(130%); }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+        }
     </style>
 </head>
 <body>
@@ -496,6 +606,23 @@
                             <strong>⚠️ Anomaly Detected!</strong> Rod floating or abnormal loading detected
                         </div>
                     </div>
+                </div>
+
+                <div class="card" id="aiValidationCard">
+                    <h3>🤖 AI Validation</h3>
+                    <div class="metric">
+                        <label>AI Production vs Twin</label>
+                        <div class="metric-value"><span id="aiProdValue">-</span><span class="metric-unit">BOPD</span></div>
+                    </div>
+                    <div class="metric">
+                        <label>Prediction Error</label>
+                        <div class="metric-value"><span id="aiErrorValue">-</span><span class="metric-unit">%</span></div>
+                    </div>
+                    <div class="metric">
+                        <label>Risk Probability</label>
+                        <div class="metric-value"><span id="aiRiskValue">-</span><span class="metric-unit">%</span></div>
+                    </div>
+                    <div id="aiAgreementStatus" class="alert-box info">Waiting for prediction validation</div>
                 </div>
             </div>
 
@@ -602,6 +729,7 @@
                 <div class="card">
                     <h3>🤖 AI Models</h3>
                     <button onclick="trainModels()">Train All Models</button>
+                    <button onclick="retrainWithFeedback()" style="margin-top: 10px;">Retrain with Feedback</button>
                     <div id="trainingStatus" style="margin-top: 20px;"></div>
                 </div>
             </div>
@@ -627,7 +755,7 @@
     </footer>
 
     <script>
-        const API_URL = 'http://localhost:8000/api';
+        const API_URL = `${window.location.origin}/api`;
 
         // ============================================================================
         // UI Functions
@@ -727,6 +855,7 @@
                     const anomalyAlert = document.getElementById('anomalyAlert');
                     if (sim.is_anomalous) {
                         anomalyAlert.style.display = 'block';
+                        anomalyAlert.querySelector('strong').textContent = '⚠️ ' + (sim.anomaly_type || 'Anomaly Detected') + '!';
                         document.getElementById('failureMetric').classList.add('alert');
                     } else {
                         anomalyAlert.style.display = 'none';
@@ -735,6 +864,30 @@
                     
                     updateStatus('statusWell', 'online', 'Well BW-001: Operating');
                     renderPerformanceChart(sim);
+                    const predictionResponse = await fetch(`${API_URL}/predict`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            steam_volume: 80, steam_pressure: 25, injection_duration: 24,
+                            soak_time: 36, spm: 4.0, stroke_length: 86,
+                            vfd_frequency: 45, production_cutoff: 1.0
+                        })
+                    });
+                    if (predictionResponse.ok) {
+                        const predictionData = await predictionResponse.json();
+                        const predictions = predictionData.predictions;
+                        const agreementStatus = document.getElementById('aiAgreementStatus');
+                        if (predictions.agreement) {
+                            document.getElementById('aiProdValue').textContent = predictions.production_bopd.toFixed(2);
+                            document.getElementById('aiErrorValue').textContent = predictions.agreement.production_error_percent.toFixed(2);
+                            document.getElementById('aiRiskValue').textContent = (predictions.failure_risk_probability * 100).toFixed(1);
+                            agreementStatus.textContent = predictions.agreement.warning ? '⚠️ AI and twin differ materially' : '✓ AI and twin are within tolerance';
+                            agreementStatus.className = predictions.agreement.warning ? 'alert-box error' : 'alert-box success';
+                        } else {
+                            agreementStatus.textContent = '⚠️ Restart API to enable AI validation';
+                            agreementStatus.className = 'alert-box error';
+                        }
+                    }
                     updateTime();
                 }
             } catch (error) {
@@ -756,14 +909,19 @@
                     `soak_time=${document.getElementById('soakTime').value}&` +
                     `spm=${document.getElementById('spmVal').value}&` +
                     `stroke_length=${document.getElementById('strokeVal').value}&` +
-                    `vfd_frequency=${document.getElementById('vfdVal').value}`
+                    `vfd_frequency=${document.getElementById('vfdVal').value}&` +
+                    `production_cutoff=${document.getElementById('cutoffVal').value}`
                 );
 
                 const data = await response.json();
                 if (data.success) {
                     const comp = data.comparison;
                     
-                    let html = '<div class="results-table" style="overflow-x: auto;">';
+                    const unchanged = Object.values(comp.changes).every(change => Math.abs(change) < 0.005);
+                    let html = unchanged
+                        ? '<div class="alert-box info">No operating parameter changed from the baseline. Adjust at least one CSS or SRP value to see an impact.</div>'
+                        : '<div class="alert-box success">Proposed settings differ from the baseline scenario.</div>';
+                    html += '<div class="results-table" style="overflow-x: auto;">';
                     html += '<table class="results-table"><tr><th>Parameter</th><th>Current</th><th>Proposed</th><th>Change</th></tr>';
                     
                     const params = [
@@ -991,6 +1149,22 @@
             } finally {
                 hideLoading();
             }
+        }
+
+        async function retrainWithFeedback() {
+            showLoading('Retraining with reviewed feedback...');
+            try {
+                const response = await fetch(`${API_URL}/models/retrain-with-feedback`, { method: 'POST' });
+                const data = await response.json();
+                if (!response.ok || !data.success) throw new Error(data.detail || 'Feedback retraining failed');
+                document.getElementById('trainingStatus').innerHTML = `<div class="alert-box success">` +
+                    `<h3>✓ Feedback Retraining Complete</h3>` +
+                    `<p>Used ${data.feedback_rows_used} reviewed feedback rows with ${data.training_rows} total rows.</p>` +
+                    `</div>`;
+                updateStatus('statusModels', 'online', 'Models: Ready');
+            } catch (error) {
+                document.getElementById('trainingStatus').innerHTML = `<div class="alert-box error">${error.message}</div>`;
+            } finally { hideLoading(); }
         }
 
         // ============================================================================
