@@ -1,0 +1,1008 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SIH26120 Digital Twin Dashboard</title>
+    <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: #333;
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        
+        header {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            margin-bottom: 30px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        
+        header h1 {
+            color: #667eea;
+            margin-bottom: 10px;
+            font-size: 2.5em;
+        }
+        
+        header p {
+            color: #666;
+            font-size: 1.1em;
+        }
+        
+        .status-bar {
+            display: flex;
+            gap: 20px;
+            margin-top: 20px;
+            flex-wrap: wrap;
+        }
+        
+        .status-item {
+            padding: 10px 20px;
+            background: #f0f0f0;
+            border-radius: 5px;
+            font-size: 0.9em;
+        }
+        
+        .status-item.online {
+            background: #d4edda;
+            color: #155724;
+        }
+        
+        .status-item.offline {
+            background: #f8d7da;
+            color: #721c24;
+        }
+        
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        
+        .card {
+            background: white;
+            padding: 25px;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+        
+        .card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 8px 12px rgba(0,0,0,0.15);
+        }
+        
+        .card h3 {
+            color: #667eea;
+            margin-bottom: 20px;
+            font-size: 1.3em;
+            border-bottom: 2px solid #667eea;
+            padding-bottom: 10px;
+        }
+        
+        .metric {
+            margin-bottom: 20px;
+        }
+        
+        .metric label {
+            display: block;
+            font-weight: 600;
+            color: #666;
+            margin-bottom: 5px;
+            font-size: 0.9em;
+        }
+        
+        .metric-value {
+            font-size: 2em;
+            font-weight: bold;
+            color: #333;
+        }
+        
+        .metric-unit {
+            font-size: 0.7em;
+            color: #999;
+            margin-left: 5px;
+        }
+        
+        .metric.alert {
+            padding: 10px;
+            background: #ffe5e5;
+            border-left: 4px solid #ff4444;
+            border-radius: 5px;
+        }
+        
+        .metric.alert .metric-value {
+            color: #d32f2f;
+        }
+        
+        input[type="number"], input[type="text"], select {
+            width: 100%;
+            padding: 10px;
+            margin-bottom: 15px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 1em;
+        }
+        
+        input[type="number"]:focus, select:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+        
+        button {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 12px 30px;
+            border-radius: 5px;
+            font-size: 1em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.3s ease;
+            width: 100%;
+        }
+        
+        button:hover {
+            background: #5568d3;
+        }
+        
+        button:active {
+            transform: scale(0.98);
+        }
+        
+        .button-group {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+        }
+        
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 20px;
+            color: #667eea;
+            font-weight: 600;
+        }
+        
+        .loading.active {
+            display: block;
+        }
+        
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .chart-container {
+            background: white;
+            padding: 25px;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            margin-bottom: 30px;
+        }
+        
+        .chart-container h3 {
+            color: #667eea;
+            margin-bottom: 20px;
+            font-size: 1.3em;
+        }
+        
+        #chart, #whatIfChart, #optimizationChart {
+            width: 100%;
+            height: 400px;
+        }
+        
+        .tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+        
+        .tab-button {
+            background: #f0f0f0;
+            color: #333;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            width: auto;
+        }
+        
+        .tab-button.active {
+            background: #667eea;
+            color: white;
+        }
+        
+        .tab-content {
+            display: none;
+        }
+        
+        .tab-content.active {
+            display: block;
+        }
+        
+        .results-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+        
+        .results-table th, .results-table td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+        
+        .results-table th {
+            background: #667eea;
+            color: white;
+            font-weight: 600;
+        }
+        
+        .results-table tr:hover {
+            background: #f5f5f5;
+        }
+        
+        .alert-box {
+            padding: 15px;
+            margin-bottom: 20px;
+            border-radius: 5px;
+            border-left: 4px solid;
+        }
+        
+        .alert-box.success {
+            background: #d4edda;
+            border-color: #28a745;
+            color: #155724;
+        }
+        
+        .alert-box.error {
+            background: #f8d7da;
+            border-color: #dc3545;
+            color: #721c24;
+        }
+        
+        .alert-box.info {
+            background: #d1ecf1;
+            border-color: #0c5460;
+            color: #0c5460;
+        }
+        
+        footer {
+            text-align: center;
+            color: white;
+            margin-top: 40px;
+            padding: 20px;
+            font-size: 0.9em;
+        }
+        
+        .well-id-display {
+            display: inline-block;
+            background: #667eea;
+            color: white;
+            padding: 5px 15px;
+            border-radius: 20px;
+            font-size: 0.9em;
+            margin-left: 10px;
+        }
+
+        @media (max-width: 768px) {
+            .grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .button-group {
+                grid-template-columns: 1fr;
+            }
+            
+            header h1 {
+                font-size: 1.8em;
+            }
+            
+            .status-bar {
+                flex-direction: column;
+            }
+        }
+
+        /* Professional dark operator-console theme */
+        :root {
+            --bg: #080b10;
+            --surface: #11161d;
+            --surface-2: #171e27;
+            --line: #283340;
+            --text: #edf2f7;
+            --muted: #93a1b0;
+            --accent: #36d399;
+            --accent-2: #4fb3ff;
+            --danger: #ff6b6b;
+        }
+
+        body {
+            background: radial-gradient(circle at 15% 0%, #17252d 0, var(--bg) 42%, #050608 100%);
+            color: var(--text);
+            font-family: "Segoe UI", sans-serif;
+            padding: 28px;
+        }
+
+        header, .card, .chart-container,
+        body > .container > div[style*="background: white"] {
+            background: rgba(17, 22, 29, 0.96) !important;
+            border: 1px solid var(--line);
+            box-shadow: 0 18px 45px rgba(0, 0, 0, 0.28);
+        }
+
+        header h1, .card h3, .chart-container h3 { color: var(--accent-2); }
+        header p, .metric label, .card p { color: var(--muted) !important; }
+        .metric-value { color: var(--text); }
+        .metric-unit { color: var(--muted); }
+        .status-item { background: var(--surface-2); color: var(--muted); border: 1px solid var(--line); }
+        .status-item.online { background: rgba(54, 211, 153, .12); color: var(--accent); }
+        .status-item.offline { background: rgba(255, 107, 107, .12); color: var(--danger); }
+        .tabs, .tabs[style] { background: var(--surface) !important; }
+        .tab-button, .tab-button:visited {
+            background: #151d26 !important;
+            color: #c5d0dc !important;
+            border: 1px solid #293642;
+        }
+        .tab-button:hover, .tab-button:focus-visible {
+            background: #243540 !important;
+            color: #ffffff !important;
+            outline: 2px solid rgba(79, 179, 255, .45);
+            outline-offset: -2px;
+        }
+        .tab-button.active, .tab-button.active:hover {
+            background: var(--accent) !important;
+            color: #06100c !important;
+            border-color: var(--accent);
+        }
+        input[type="number"], input[type="text"], select {
+            background: #0b0f14; color: var(--text); border: 1px solid var(--line);
+        }
+        input[type="number"]:focus, select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(54, 211, 153, .12); }
+        button { background: var(--accent); color: #06100c; border-radius: 6px; }
+        button:hover { background: #63e6b0; }
+        .tab-button { background: var(--surface-2); color: var(--muted); }
+        .tab-button.active { background: var(--accent); color: #06100c; }
+        .results-table th { background: #1d3540; color: var(--text); }
+        .results-table td, .results-table th { border-color: var(--line); }
+        .results-table td { color: var(--text); }
+        .results-table tr:hover { background: #1d2a34 !important; color: #ffffff; }
+        .alert-box.success {
+            background: rgba(54, 211, 153, .14) !important;
+            border-color: var(--accent) !important;
+            color: #d9ffef !important;
+        }
+        .alert-box.success h3 { color: var(--accent-2) !important; }
+        .alert-box.error {
+            background: rgba(255, 107, 107, .14) !important;
+            border-color: var(--danger) !important;
+            color: #ffd8d8 !important;
+        }
+        #loadingOverlay > div {
+            background: var(--surface) !important;
+            color: var(--text) !important;
+            border: 1px solid var(--line);
+        }
+        #loadingText { color: var(--text) !important; }
+        .chart-container { min-height: 450px; }
+        #chart, #whatIfChart, #optimizationChart { min-height: 360px; }
+        footer { color: var(--muted); }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header>
+            <h1>⚙️ SIH26120 Digital Twin</h1>
+            <p>Well-to-Surface Optimization for CSS and SRP Operations</p>
+            <div class="status-bar">
+                <div class="status-item online" id="statusAPI">🟢 API: Connected</div>
+                <div class="status-item" id="statusModels">⚪ Models: Ready</div>
+                <div class="status-item" id="statusWell">⚪ Well BW-001: Idle</div>
+                <div class="status-item" id="statusTime">🕐 Last Update: -</div>
+            </div>
+        </header>
+
+        <!-- Tab Navigation -->
+        <div style="background: white; padding: 0; border-radius: 10px; overflow: hidden; margin-bottom: 30px;">
+            <div class="tabs" style="background: #f9f9f9; padding: 0; border-radius: 0;">
+                <button class="tab-button active" onclick="switchTab('dashboard')">Dashboard</button>
+                <button class="tab-button" onclick="switchTab('simulator')">What-If Simulator</button>
+                <button class="tab-button" onclick="switchTab('optimizer')">Optimization</button>
+                <button class="tab-button" onclick="switchTab('data')">Data & Models</button>
+            </div>
+        </div>
+
+        <!-- DASHBOARD TAB -->
+        <div id="dashboard" class="tab-content active">
+            <div class="grid">
+                <!-- Current Well State -->
+                <div class="card">
+                    <h3>📊 Current Well State</h3>
+                    <div class="metric">
+                        <label>Reservoir Temperature</label>
+                        <div class="metric-value"><span id="tempValue">-</span><span class="metric-unit">°C</span></div>
+                    </div>
+                    <div class="metric">
+                        <label>Oil Viscosity</label>
+                        <div class="metric-value"><span id="viscValue">-</span><span class="metric-unit">cP</span></div>
+                    </div>
+                    <div class="metric">
+                        <label>Pump Efficiency</label>
+                        <div class="metric-value"><span id="effValue">-</span><span class="metric-unit">%</span></div>
+                    </div>
+                </div>
+
+                <!-- Production Metrics -->
+                <div class="card">
+                    <h3>🛢️ Production Metrics</h3>
+                    <div class="metric">
+                        <label>Oil Production Rate</label>
+                        <div class="metric-value"><span id="prodValue">-</span><span class="metric-unit">BOPD</span></div>
+                    </div>
+                    <div class="metric">
+                        <label>Steam-Oil Ratio (SOR)</label>
+                        <div class="metric-value"><span id="sorValue">-</span><span class="metric-unit">SOR</span></div>
+                    </div>
+                    <div class="metric">
+                        <label>Energy Consumption</label>
+                        <div class="metric-value"><span id="energyValue">-</span><span class="metric-unit">kW</span></div>
+                    </div>
+                </div>
+
+                <!-- Equipment Status -->
+                <div class="card" id="failureRiskCard">
+                    <h3>⚠️ Equipment Status</h3>
+                    <div class="metric">
+                        <label>Rod Load</label>
+                        <div class="metric-value"><span id="rodValue">-</span><span class="metric-unit">tons</span></div>
+                    </div>
+                    <div class="metric" id="failureMetric">
+                        <label>Failure Risk</label>
+                        <div class="metric-value"><span id="failValue">-</span><span class="metric-unit">%</span></div>
+                    </div>
+                    <div id="anomalyAlert" style="display:none; margin-top: 15px;">
+                        <div class="alert-box error">
+                            <strong>⚠️ Anomaly Detected!</strong> Rod floating or abnormal loading detected
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Charts -->
+            <div class="chart-container">
+                <h3>📈 Performance Trends</h3>
+                <div id="chart"></div>
+            </div>
+
+            <button onclick="runSimulation()">Run Simulation</button>
+        </div>
+
+        <!-- WHAT-IF SIMULATOR TAB -->
+        <div id="simulator" class="tab-content">
+            <div class="grid">
+                <div class="card">
+                    <h3>⚙️ CSS Parameters</h3>
+                    <label>Steam Volume (tons)</label>
+                    <input type="number" id="steamVol" value="80" min="60" max="100" step="5">
+                    
+                    <label>Steam Pressure (bar)</label>
+                    <input type="number" id="steamPress" value="25" min="22" max="28" step="1">
+                    
+                    <label>Injection Duration (hours)</label>
+                    <input type="number" id="injDur" value="24" min="18" max="30" step="1">
+                    
+                    <label>Soak Time (hours)</label>
+                    <input type="number" id="soakTime" value="36" min="24" max="48" step="1">
+                </div>
+
+                <div class="card">
+                    <h3>🔧 SRP Parameters</h3>
+                    <label>SPM (Strokes Per Minute)</label>
+                    <input type="number" id="spmVal" value="4.0" min="3.0" max="6.5" step="0.1">
+                    
+                    <label>Stroke Length (inches)</label>
+                    <input type="number" id="strokeVal" value="86" min="70" max="105" step="1">
+                    
+                    <label>VFD Frequency (Hz)</label>
+                    <input type="number" id="vfdVal" value="45" min="35" max="55" step="1">
+                    
+                    <label>Production Cutoff (tonnes/day)</label>
+                    <input type="number" id="cutoffVal" value="1.0" min="0.5" max="2.0" step="0.1">
+                </div>
+            </div>
+
+            <div class="button-group">
+                <button onclick="runWhatIfSimulation()">📊 Run What-If</button>
+                <button onclick="compareScenarios()">📈 Compare Scenarios</button>
+            </div>
+
+            <div id="whatIfResults" style="margin-top: 20px;"></div>
+            
+            <div class="chart-container" style="margin-top: 30px;">
+                <h3>Comparison Chart</h3>
+                <div id="whatIfChart"></div>
+            </div>
+        </div>
+
+        <!-- OPTIMIZATION TAB -->
+        <div id="optimizer" class="tab-content">
+            <div class="card">
+                <h3>🎯 Multi-Objective Optimization</h3>
+                <p style="margin-bottom: 20px; color: #666;">
+                    The system will evaluate multiple CSS and SRP parameter combinations to find optimal solutions.
+                </p>
+                
+                <label>Number of Iterations</label>
+                <input type="number" id="iterations" value="30" min="10" max="100" step="10">
+                
+                <label>Priority</label>
+                <select id="priority">
+                    <option value="balanced">Balanced (Production + Efficiency + Cost)</option>
+                    <option value="production">Maximum Production</option>
+                    <option value="efficiency">Maximum Efficiency</option>
+                    <option value="cost">Minimum Cost</option>
+                </select>
+                
+                <button onclick="runOptimization()" style="margin-top: 20px;">▶️ Start Optimization</button>
+            </div>
+
+            <div id="optimizationResults" style="margin-top: 30px;"></div>
+            
+            <div class="chart-container" style="margin-top: 30px; display:none;" id="optimizationChartContainer">
+                <h3>Pareto Front</h3>
+                <div id="optimizationChart"></div>
+            </div>
+        </div>
+
+        <!-- DATA & MODELS TAB -->
+        <div id="data" class="tab-content">
+            <div class="grid">
+                <div class="card">
+                    <h3>📊 Synthetic Data</h3>
+                    <label>Number of Wells</label>
+                    <input type="number" id="nWells" value="5" min="1" max="20">
+                    
+                    <label>Cycles Per Well</label>
+                    <input type="number" id="nCycles" value="100" min="10" max="500" step="10">
+                    
+                    <button onclick="generateData()">Generate Data</button>
+                </div>
+
+                <div class="card">
+                    <h3>🤖 AI Models</h3>
+                    <button onclick="trainModels()">Train All Models</button>
+                    <div id="trainingStatus" style="margin-top: 20px;"></div>
+                </div>
+            </div>
+
+            <div class="chart-container" style="margin-top: 30px;">
+                <h3>📈 Data Statistics</h3>
+                <div id="statsContent"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Loading Overlay -->
+    <div id="loadingOverlay" style="display:none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 999; display: flex; align-items: center; justify-content: center;">
+        <div style="background: white; padding: 40px; border-radius: 10px; text-align: center;">
+            <div class="spinner"></div>
+            <p id="loadingText" style="margin-top: 20px; color: #333;">Processing...</p>
+        </div>
+    </div>
+
+    <footer>
+        <p>SIH26120 Digital Twin | Oil India Limited | Version 1.0.0</p>
+        <p>Physics-Informed AI for Well-to-Surface Optimization</p>
+    </footer>
+
+    <script>
+        const API_URL = 'http://localhost:8000/api';
+
+        // ============================================================================
+        // UI Functions
+        // ============================================================================
+
+        function switchTab(tabName) {
+            // Hide all tabs
+            document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+            document.querySelectorAll('.tab-button').forEach(el => el.classList.remove('active'));
+            
+            // Show selected tab
+            document.getElementById(tabName).classList.add('active');
+            document.querySelector(`.tab-button[onclick="switchTab('${tabName}')"]`).classList.add('active');
+            if (tabName === 'data') loadStatistics();
+        }
+
+        function showLoading(text = 'Processing...') {
+            document.getElementById('loadingText').textContent = text;
+            document.getElementById('loadingOverlay').style.display = 'flex';
+        }
+
+        function hideLoading() {
+            document.getElementById('loadingOverlay').style.display = 'none';
+        }
+
+        function updateStatus(element, status, message) {
+            const el = document.getElementById(element);
+            if (status === 'online') {
+                el.className = 'status-item online';
+                el.textContent = '🟢 ' + message;
+            } else if (status === 'error') {
+                el.className = 'status-item offline';
+                el.textContent = '🔴 ' + message;
+            } else {
+                el.className = 'status-item';
+                el.textContent = '⚪ ' + message;
+            }
+        }
+
+        function updateTime() {
+            const now = new Date().toLocaleTimeString();
+            document.getElementById('statusTime').textContent = '🕐 Last Update: ' + now;
+        }
+
+        // ============================================================================
+        // API Functions
+        // ============================================================================
+
+        async function checkAPIHealth() {
+            try {
+                const response = await fetch(`${API_URL.replace('/api', '')}/health`);
+                if (response.ok) {
+                    updateStatus('statusAPI', 'online', 'API: Connected');
+                    return true;
+                }
+            } catch (e) {
+                updateStatus('statusAPI', 'error', 'API: Offline');
+                return false;
+            }
+        }
+
+        async function runSimulation() {
+            showLoading('Running simulation...');
+            updateTime();
+            
+            try {
+                const response = await fetch(`${API_URL}/simulate`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        steam_volume: 80,
+                        steam_pressure: 25,
+                        injection_duration: 24,
+                        soak_time: 36,
+                        spm: 4.0,
+                        stroke_length: 86,
+                        vfd_frequency: 45,
+                        production_cutoff: 1.0
+                    })
+                });
+
+                const data = await response.json();
+                if (data.success) {
+                    const sim = data.simulation;
+                    
+                    // Update metrics
+                    document.getElementById('tempValue').textContent = sim.reservoir_temperature;
+                    document.getElementById('viscValue').textContent = sim.oil_viscosity;
+                    document.getElementById('effValue').textContent = (sim.pump_efficiency * 100).toFixed(1);
+                    document.getElementById('prodValue').textContent = sim.actual_production.toFixed(2);
+                    document.getElementById('sorValue').textContent = sim.sor.toFixed(2);
+                    document.getElementById('energyValue').textContent = sim.energy_consumption.toFixed(2);
+                    document.getElementById('rodValue').textContent = sim.rod_load.toFixed(2);
+                    document.getElementById('failValue').textContent = (sim.failure_risk * 100).toFixed(1);
+                    
+                    // Update anomaly alert
+                    const anomalyAlert = document.getElementById('anomalyAlert');
+                    if (sim.is_anomalous) {
+                        anomalyAlert.style.display = 'block';
+                        document.getElementById('failureMetric').classList.add('alert');
+                    } else {
+                        anomalyAlert.style.display = 'none';
+                        document.getElementById('failureMetric').classList.remove('alert');
+                    }
+                    
+                    updateStatus('statusWell', 'online', 'Well BW-001: Operating');
+                    renderPerformanceChart(sim);
+                    updateTime();
+                }
+            } catch (error) {
+                alert('Error: ' + error.message);
+            } finally {
+                hideLoading();
+            }
+        }
+
+        async function runWhatIfSimulation() {
+            showLoading('Running what-if analysis...');
+            
+            try {
+                const response = await fetch(
+                    `${API_URL}/simulate/what-if?` +
+                    `steam_volume=${document.getElementById('steamVol').value}&` +
+                    `steam_pressure=${document.getElementById('steamPress').value}&` +
+                    `injection_duration=${document.getElementById('injDur').value}&` +
+                    `soak_time=${document.getElementById('soakTime').value}&` +
+                    `spm=${document.getElementById('spmVal').value}&` +
+                    `stroke_length=${document.getElementById('strokeVal').value}&` +
+                    `vfd_frequency=${document.getElementById('vfdVal').value}`
+                );
+
+                const data = await response.json();
+                if (data.success) {
+                    const comp = data.comparison;
+                    
+                    let html = '<div class="results-table" style="overflow-x: auto;">';
+                    html += '<table class="results-table"><tr><th>Parameter</th><th>Current</th><th>Proposed</th><th>Change</th></tr>';
+                    
+                    const params = [
+                        { name: 'Production (BOPD)', key: 'production', unit: '' },
+                        { name: 'Efficiency', key: 'efficiency', unit: '' },
+                        { name: 'SOR', key: 'sor', unit: '' },
+                        { name: 'Energy (kW)', key: 'energy', unit: '' }
+                    ];
+                    
+                    params.forEach(p => {
+                        const curr = comp.current[p.key];
+                        const prop = comp.proposed[p.key];
+                        const change = ((prop - curr) / curr * 100).toFixed(2);
+                        const arrow = change > 0 ? '📈' : change < 0 ? '📉' : '➡️';
+                        
+                        html += `<tr>
+                            <td>${p.name}</td>
+                            <td>${curr.toFixed(2)}</td>
+                            <td>${prop.toFixed(2)}</td>
+                            <td>${arrow} ${change}%</td>
+                        </tr>`;
+                    });
+                    
+                    html += '</table></div>';
+                    document.getElementById('whatIfResults').innerHTML = html;
+                    renderComparisonChart(comp.current, comp.proposed);
+                }
+            } catch (error) {
+                alert('Error: ' + error.message);
+            } finally {
+                hideLoading();
+            }
+        }
+
+        async function compareScenarios() {
+            await runWhatIfSimulation();
+            document.getElementById('whatIfResults').scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+
+        function renderPerformanceChart(sim) {
+            const values = [sim.reservoir_temperature, sim.oil_viscosity, sim.actual_production, sim.energy_consumption];
+            const labels = ['Temperature', 'Viscosity', 'Production', 'Energy'];
+            if (window.Plotly) {
+                Plotly.newPlot('chart', [{ x: labels, y: values, type: 'bar', marker: { color: ['#4fb3ff', '#36d399', '#f6c85f', '#ff8a65'] } }], {
+                    paper_bgcolor: 'transparent', plot_bgcolor: 'transparent', font: { color: '#edf2f7' },
+                    margin: { t: 20, r: 20, b: 55, l: 55 }, yaxis: { gridcolor: '#283340' }
+                }, { responsive: true, displayModeBar: false });
+            }
+        }
+
+        function renderComparisonChart(current, proposed) {
+            const labels = ['Production', 'Efficiency', 'SOR', 'Energy'];
+            const currentValues = [current.production, current.efficiency, current.sor, current.energy];
+            const proposedValues = [proposed.production, proposed.efficiency, proposed.sor, proposed.energy];
+            if (window.Plotly) {
+                Plotly.newPlot('whatIfChart', [
+                    { x: labels, y: currentValues, name: 'Current', type: 'bar', marker: { color: '#718096' } },
+                    { x: labels, y: proposedValues, name: 'Proposed', type: 'bar', marker: { color: '#36d399' } }
+                ], { barmode: 'group', paper_bgcolor: 'transparent', plot_bgcolor: 'transparent', font: { color: '#edf2f7' },
+                    margin: { t: 20, r: 20, b: 55, l: 55 }, yaxis: { gridcolor: '#283340' }, legend: { orientation: 'h' }
+                }, { responsive: true, displayModeBar: false });
+            }
+        }
+
+        async function runOptimization() {
+            showLoading('Running optimization (this may take a minute)...');
+            
+            try {
+                const response = await fetch(`${API_URL}/optimize`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        n_iterations: parseInt(document.getElementById('iterations').value),
+                        priority: document.getElementById('priority').value
+                    })
+                });
+
+                const data = await response.json();
+                if (data.success) {
+                    const opt = data.optimization;
+                    const rec = opt.recommendation;
+                    
+                    let html = '<div class="alert-box success" style="margin-bottom: 20px;">';
+                    html += '<h3>✓ Optimization Complete</h3>';
+                    html += '<p>Evaluated ' + opt.valid_solutions + ' valid solutions</p>';
+                    html += '</div>';
+                    
+                    html += '<div class="card" style="background: #f0f8ff; border: 2px solid #667eea;">';
+                    html += '<h3>🎯 Recommended Settings</h3>';
+                    
+                    html += '<h4 style="margin-top: 20px; color: #667eea;">CSS Parameters</h4>';
+                    html += `<table class="results-table">`;
+                    html += `<tr><td>Steam Volume</td><td>${rec.css_parameters.steam_volume_tons} tons</td></tr>`;
+                    html += `<tr><td>Steam Pressure</td><td>${rec.css_parameters.steam_pressure_bar} bar</td></tr>`;
+                    html += `<tr><td>Injection Duration</td><td>${rec.css_parameters.injection_duration_hours} hours</td></tr>`;
+                    html += `<tr><td>Soak Time</td><td>${rec.css_parameters.soak_time_hours} hours</td></tr>`;
+                    html += `</table>`;
+                    
+                    html += '<h4 style="margin-top: 20px; color: #667eea;">SRP Parameters</h4>';
+                    html += `<table class="results-table">`;
+                    html += `<tr><td>SPM</td><td>${rec.srp_parameters.spm}</td></tr>`;
+                    html += `<tr><td>Stroke</td><td>${rec.srp_parameters.stroke_length_inches} inches</td></tr>`;
+                    html += `<tr><td>VFD Frequency</td><td>${rec.srp_parameters.vfd_frequency_hz} Hz</td></tr>`;
+                    html += `</table>`;
+                    
+                    html += '<h4 style="margin-top: 20px; color: #667eea;">Expected Outcomes</h4>';
+                    html += `<table class="results-table">`;
+                    html += `<tr><td>Production</td><td>${rec.expected_outcomes.production_bopd} BOPD</td></tr>`;
+                    html += `<tr><td>Efficiency</td><td>${(rec.expected_outcomes.pump_efficiency * 100).toFixed(1)}%</td></tr>`;
+                    html += `<tr><td>SOR</td><td>${rec.expected_outcomes.steam_oil_ratio}</td></tr>`;
+                    html += `<tr><td>Energy</td><td>${rec.expected_outcomes.energy_consumption_kw} kW</td></tr>`;
+                    html += `<tr><td>Failure Risk</td><td>${(rec.expected_outcomes.failure_risk * 100).toFixed(1)}%</td></tr>`;
+                    html += `</table>`;
+                    html += '</div>';
+                    
+                    html += '<h3 style="margin-top: 30px;">Top 5 Solutions</h3>';
+                    html += '<table class="results-table"><tr><th>#</th><th>Fitness</th><th>Production</th><th>SOR</th><th>Energy</th></tr>';
+                    
+                    opt.top_5_solutions.forEach(sol => {
+                        html += `<tr>
+                            <td>${sol.rank}</td>
+                            <td>${sol.fitness_score}</td>
+                            <td>${sol.expected_outcomes.production} BOPD</td>
+                            <td>${sol.expected_outcomes.sor}</td>
+                            <td>${sol.expected_outcomes.energy} kW</td>
+                        </tr>`;
+                    });
+                    
+                    html += '</table>';
+                    
+                    document.getElementById('optimizationResults').innerHTML = html;
+                    renderOptimizationChart(opt.top_5_solutions);
+                    document.getElementById('optimizationChartContainer').style.display = 'block';
+                }
+            } catch (error) {
+                alert('Error: ' + error.message);
+            } finally {
+                hideLoading();
+            }
+        }
+
+        function renderOptimizationChart(solutions) {
+            if (!window.Plotly || !solutions.length) return;
+            Plotly.newPlot('optimizationChart', [{
+                x: solutions.map(s => s.expected_outcomes.energy),
+                y: solutions.map(s => s.expected_outcomes.production),
+                text: solutions.map(s => `Solution ${s.rank}`), mode: 'markers+text', textposition: 'top center',
+                marker: { size: 13, color: solutions.map(s => s.fitness_score), colorscale: 'Viridis', showscale: true }
+            }], { paper_bgcolor: 'transparent', plot_bgcolor: 'transparent', font: { color: '#edf2f7' },
+                xaxis: { title: 'Energy (kW)', gridcolor: '#283340' }, yaxis: { title: 'Production (BOPD)', gridcolor: '#283340' },
+                margin: { t: 20, r: 20, b: 60, l: 65 }
+            }, { responsive: true, displayModeBar: false });
+        }
+
+        async function generateData() {
+            showLoading('Generating synthetic data...');
+            
+            try {
+                const response = await fetch(
+                    `${API_URL}/data/generate?` +
+                    `n_wells=${document.getElementById('nWells').value}&` +
+                    `n_cycles=${document.getElementById('nCycles').value}`
+                );
+
+                const data = await response.json();
+                if (data.success) {
+                    alert('Data generated successfully!\n' + 
+                          `Rows: ${data.data_generation.rows_generated}\n` +
+                          `File: ${data.data_generation.filepath}`);
+                      await loadStatistics();
+                }
+            } catch (error) {
+                alert('Error: ' + error.message);
+            } finally {
+                hideLoading();
+            }
+        }
+
+        async function loadStatistics() {
+            const target = document.getElementById('statsContent');
+            if (!target) return;
+            target.innerHTML = '<p style="color:var(--muted)">Loading dataset statistics...</p>';
+            try {
+                const response = await fetch(`${API_URL}/data/statistics`);
+                const data = await response.json();
+                if (!response.ok || !data.success) throw new Error(data.detail || 'Statistics unavailable');
+                const stats = data.statistics;
+                target.innerHTML = `<div class="grid" style="margin-bottom:0">
+                    <div class="metric"><label>Rows</label><div class="metric-value">${stats.total_rows}</div></div>
+                    <div class="metric"><label>Columns</label><div class="metric-value">${stats.total_columns}</div></div>
+                    <div class="metric"><label>Wells</label><div class="metric-value">${stats.wells}</div></div>
+                    <div class="metric"><label>Numeric Features</label><div class="metric-value">${stats.numeric_features}</div></div>
+                </div><p style="color:var(--muted); margin-top:16px">Physics-informed synthetic data is ready for simulation and model training.</p>`;
+            } catch (error) { target.innerHTML = `<div class="alert-box error">Unable to load statistics: ${error.message}</div>`; }
+        }
+
+        async function trainModels() {
+            showLoading('Training AI models (this may take a minute)...');
+            updateStatus('statusModels', 'online', 'Models: Training');
+            
+            try {
+                const response = await fetch(`${API_URL}/models/train`, { method: 'POST' });
+                const data = await response.json();
+                
+                if (data.success) {
+                    let html = '<div class="alert-box success">';
+                    html += '<h3>✓ Models Trained Successfully!</h3>';
+                    html += '<table class="results-table">';
+                    
+                    Object.entries(data.training.results).forEach(([name, metrics]) => {
+                        html += `<tr><td>${name}</td><td>`;
+                        Object.entries(metrics).forEach(([k, v]) => {
+                            html += `${k}: ${v}<br>`;
+                        });
+                        html += `</td></tr>`;
+                    });
+                    
+                    html += '</table></div>';
+                    document.getElementById('trainingStatus').innerHTML = html;
+                    updateStatus('statusModels', 'online', 'Models: Ready');
+                }
+            } catch (error) {
+                alert('Error: ' + error.message);
+                updateStatus('statusModels', 'error', 'Models: Error');
+            } finally {
+                hideLoading();
+            }
+        }
+
+        // ============================================================================
+        // Initialization
+        // ============================================================================
+
+        window.addEventListener('load', async () => {
+            await checkAPIHealth();
+            await runSimulation();
+            await loadStatistics();
+            setInterval(updateTime, 1000);
+        });
+    </script>
+</body>
+</html>

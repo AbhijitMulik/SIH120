@@ -1,0 +1,268 @@
+# SIH26120 Digital Twin Configuration
+# All operating constraints and parameters are defined here
+
+# ============================================================================
+# RESERVOIR PARAMETERS
+# ============================================================================
+reservoir:
+  initial_temperature: 46.0      # °C - Baghewala initial temperature
+  initial_pressure: 15.0         # bar
+  initial_viscosity: 950.0       # cP - Heavy oil at initial temp
+  initial_api_gravity: 18.0      # °API - Heavy crude
+  cooling_rate_per_cycle: 0.8    # °C decrease per cycle
+
+# ============================================================================
+# CSS (CYCLIC STEAM STIMULATION) CONSTRAINTS
+# ============================================================================
+css_constraints:
+  steam_volume:
+    min: 60                       # tons - minimum safe injection
+    max: 100                      # tons - maximum available capacity
+    optimal: 80                   # tons - historical optimum
+  
+  steam_pressure:
+    min: 22                       # bar - minimum pressure
+    max: 28                       # bar - maximum equipment rating
+    optimal: 25                   # bar
+  
+  injection_duration:
+    min: 18                       # hours
+    max: 30                       # hours
+    optimal: 24                   # hours
+  
+  soak_time:
+    min: 24                       # hours - minimum for heat distribution
+    max: 48                       # hours - maximum before cooling loss
+    optimal: 36                   # hours
+  
+  production_cutoff:
+    min: 0.5                      # tonnes/day
+    max: 2.0                      # tonnes/day
+    optimal: 1.0                  # tonnes/day
+
+# ============================================================================
+# SRP (SUCKER ROD PUMP) CONSTRAINTS
+# ============================================================================
+srp_constraints:
+  spm:
+    min: 3.0                      # Strokes Per Minute
+    max: 6.5                      # High speed risks failure
+    optimal: 4.0                  # Historical optimum
+    design: 5.0                   # Design specification
+  
+  stroke_length:
+    min: 70                       # inches - minimum equipment
+    max: 105                      # inches - maximum rod strength
+    optimal: 86                   # inches - historical optimum
+  
+  vfd_frequency:
+    min: 35                       # Hz - minimum for reliable operation
+    max: 55                       # Hz - maximum motor rating
+    optimal: 45                   # Hz - balanced performance
+  
+  rod_load:
+    min: 0                        # tons
+    max: 150                      # tons - CRITICAL: above this = danger
+    warning: 120                  # tons - alert operator
+    design: 100                   # tons - design load
+  
+  motor_power:
+    min: 5                        # kW
+    max: 50                       # kW - maximum motor
+    design: 25                    # kW
+  
+  motor_current:
+    min: 100                      # Amps
+    max: 2000                     # Amps - trip threshold
+    warning: 1800                 # Amps
+
+# ============================================================================
+# ENERGY CONSTRAINTS
+# ============================================================================
+energy_constraints:
+  max_daily_consumption: 600     # kWh/day
+  max_instantaneous: 25          # kW
+  cost_per_kwh: 8.5              # $ per kWh (approximation)
+
+# ============================================================================
+# PRODUCTION CONSTRAINTS
+# ============================================================================
+production_constraints:
+  min_production: 0              # BOPD
+  max_production: 200            # BOPD - theoretical maximum
+  sor_min: 2.0                   # Minimum achievable SOR
+  sor_max: 10.0                  # Maximum acceptable SOR
+  target_sor: 3.5                # Target SOR
+
+# ============================================================================
+# FAILURE & SAFETY CONSTRAINTS
+# ============================================================================
+safety_constraints:
+  max_failure_risk: 0.6          # 60% - absolute maximum
+  failure_risk_warning: 0.5      # 50% - alert operator
+  failure_risk_target: 0.2       # 20% - desired target
+  
+  # Rod floating detection threshold
+  rod_floating_viscosity: 800    # cP
+  rod_floating_load: 50          # tons
+  
+  # Impact loading detection
+  impact_loading_viscosity: 750  # cP
+  impact_loading_spm: 5.5        # SPM
+  
+  # Pump inefficiency threshold
+  min_efficiency: 0.35           # 35% minimum acceptable
+  efficiency_warning: 0.50       # 50% - alert if below
+  efficiency_target: 0.70        # 70% - desired target
+
+# ============================================================================
+# DATA & SYNTHETIC GENERATION
+# ============================================================================
+data_generation:
+  default_wells: 5               # Number of wells to generate
+  default_cycles: 100            # Cycles per well
+  scenarios:
+    - normal                     # Normal operating conditions
+    - low_temperature            # Cold reservoir
+    - high_viscosity             # Thin layer at high viscosity
+    - high_spm                   # High stroke rate conditions
+    - rod_floating               # Abnormal rod load pattern
+
+# ============================================================================
+# OPTIMIZATION SETTINGS
+# ============================================================================
+optimization:
+  algorithm: "nsga_ii_simplified"
+  population_size: 50
+  max_generations: 100
+  
+  objectives:
+    - maximize_production
+    - maximize_efficiency
+    - minimize_sor
+    - minimize_energy
+    - minimize_failure_risk
+    - minimize_cost
+  
+  weights:
+    production: 0.25
+    efficiency: 0.20
+    sor: 0.20
+    energy: 0.15
+    failure_risk: 0.20
+  
+  pareto_solutions_to_keep: 10
+
+# ============================================================================
+# AI MODEL SETTINGS
+# ============================================================================
+ai_models:
+  production_predictor:
+    type: "XGBoost"
+    n_estimators: 100
+    max_depth: 6
+    learning_rate: 0.1
+    validation_split: 0.2
+  
+  temperature_predictor:
+    type: "XGBoost"
+    n_estimators: 100
+    max_depth: 5
+    learning_rate: 0.1
+    validation_split: 0.2
+  
+  energy_predictor:
+    type: "RandomForest"
+    n_estimators: 100
+    max_depth: 10
+    validation_split: 0.2
+  
+  failure_risk_classifier:
+    type: "RandomForest"
+    n_estimators: 100
+    max_depth: 10
+    classes: ["Low", "Medium", "High"]
+    class_weights: [1, 1, 2]      # More weight to High risk
+
+# ============================================================================
+# API SERVER SETTINGS
+# ============================================================================
+api_server:
+  host: "0.0.0.0"
+  port: 8000
+  reload: true                   # Enable auto-reload during development
+  log_level: "info"
+  
+  cors:
+    allow_origins: ["*"]
+    allow_methods: ["*"]
+    allow_headers: ["*"]
+
+# ============================================================================
+# DATABASE/STORAGE SETTINGS
+# ============================================================================
+storage:
+  data_directory: "data"
+  models_directory: "models"
+  synthetic_data_file: "synthetic_data.csv"
+  
+  # Auto-save settings
+  auto_save_models: true
+  auto_save_interval: 100        # Save after every 100 predictions
+  save_optimization_history: true
+
+# ============================================================================
+# LOGGING SETTINGS
+# ============================================================================
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file: "logs/digital_twin.log"
+  backup_count: 5
+  max_bytes: 10485760            # 10 MB
+
+# ============================================================================
+# PERFORMANCE TUNING
+# ============================================================================
+performance:
+  cache_enabled: true
+  cache_ttl: 3600                # seconds
+  batch_size_training: 32
+  batch_size_prediction: 100
+  num_workers: 4
+
+# ============================================================================
+# FUTURE SCADA/IoT INTEGRATION
+# ============================================================================
+scada_integration:
+  enabled: false                 # Enable when real data available
+  protocol: "mqtt"               # or "modbus", "opc-ua"
+  broker_host: "localhost"
+  broker_port: 1883
+  topic: "baghewala/well/data"
+  update_frequency: 60           # seconds
+
+# ============================================================================
+# FEEDBACK LOOP SETTINGS
+# ============================================================================
+feedback_loop:
+  enabled: true
+  update_after_cycles: 5         # Update models after 5 cycles
+  retrain_frequency: 50          # Full retrain after 50 cycles
+  prediction_error_threshold: 10 # % - alert if exceeds
+  adaptive_learning_enabled: true
+
+# ============================================================================
+# NOTIFICATION SETTINGS
+# ============================================================================
+notifications:
+  email_alerts: false            # Enable for production
+  email_recipients: []
+  slack_webhooks: []
+  
+  alert_triggers:
+    high_failure_risk: true
+    rod_floating: true
+    pump_inefficiency: true
+    energy_overspend: true
+    production_below_target: true
